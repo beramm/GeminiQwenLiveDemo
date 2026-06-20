@@ -38,6 +38,7 @@ Open your browser and navigate to:
 /
 ├── main.py             # FastAPI server & WebSocket endpoint
 ├── gemini_live.py      # Gemini Live API wrapper using Gen AI SDK
+├── qwen_omni.py        # Qwen omni realtime using dashcope api key
 ├── requirements.txt    # Python dependencies
 └── frontend/
     ├── index.html      # User Interface
@@ -58,12 +59,14 @@ You can configure the application by setting environment variables or by using a
 
 ```env
 GEMINI_API_KEY=your_api_key_here
+DASHSCOPE_API_KEY= your_api_key_here 
 ```
 
 Alternatively, you can set it in your shell:
 
 ```bash
 export GEMINI_API_KEY=your_api_key_here
+export DASHSCOPE_API_KEY=your_api_key_here
 ```
 
 ## Core Components
@@ -81,6 +84,40 @@ async with self.client.aio.live.connect(model=self.model, config=config) as sess
         send_video(),
         receive_responses()
     )
+```
+
+The `Qwenomnii` uses session config to manage the session:
+
+```python
+# configuring session
+session_config = {
+                    "modalities": ["text", "audio"],
+                    "voice": self.voice,
+                    "instructions": self.instructions,
+                    "input_audio_format": "pcm",
+                    "output_audio_format": "pcm",
+                    "input_audio_transcription": {"model": "gummy-realtime-v1"},
+                    "turn_detection": {
+                        "type": "server_vad",
+                        "threshold": 0.5,
+                        "prefix_padding_ms": 500,
+                        "silence_duration_ms": 800,
+                    },
+                    "enable_search": True,          
+                    "search_options": {
+                        "enable_source": True        
+                    },
+                    # "tools": [
+                    #     {
+                    #         "type": "function",
+                    #         "name": t["name"],
+                    #         "description": t.get("description", ""),
+                    #         "parameters": t.get("parameters", {"type": "object", "properties": {}}),
+                    #     }
+                    #     for t in self.tools
+                    # ] if self.tools else [],
+
+                }
 ```
 
 ### Frontend (`gemini-client.js`)
