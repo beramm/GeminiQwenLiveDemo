@@ -77,19 +77,19 @@ class QwenOmni:
                         "prefix_padding_ms": 500,
                         "silence_duration_ms": 800,
                     },
-                    "enable_search": True,          
-                    "search_options": {
-                        "enable_source": True        
-                    },
-                    # "tools": [
-                    #     {
-                    #         "type": "function",
-                    #         "name": t["name"],
-                    #         "description": t.get("description", ""),
-                    #         "parameters": t.get("parameters", {"type": "object", "properties": {}}),
-                    #     }
-                    #     for t in self.tools
-                    # ] if self.tools else [],
+                    # "enable_search": True,          
+                    # "search_options": {
+                    #     "enable_source": True        
+                    # },
+                    "tools": [
+                        {
+                            "type": "function",
+                            "name": t["name"],
+                            "description": t.get("description", ""),
+                            "parameters": t.get("parameters", {"type": "object", "properties": {}}),
+                        }
+                        for t in self.tools
+                    ] if self.tools else [],
 
                 }
                 # After session_config send, add this:
@@ -113,7 +113,8 @@ class QwenOmni:
                 state = {
                     "is_responding": False,
                     "current_response_id": None,
-                    "audio_primed": True,  
+                    "audio_primed": False,  
+                    "session_ready": False, 
                     "pending_tool_calls": {},
 
                 }
@@ -122,7 +123,7 @@ class QwenOmni:
                     try:
                         while True:
                             chunk = await audio_input_queue.get()
-                            state["audio_primed"] = True
+                            # state["audio_primed"] = True
                             audio_b64 = base64.b64encode(chunk).decode("ascii")
                             await self._send_event(
                                 ws,
@@ -140,7 +141,7 @@ class QwenOmni:
                     try:
                         while True:
                             chunk = await video_input_queue.get()
-                            if not state["audio_primed"]:
+                            if not state["audio_primed"] or not state["session_ready"]:
                                 logger.debug("Dropping image frame — audio not yet primed")
                                 continue
                             logger.info(f"Sending image frame to Qwen: {len(chunk)} bytes")
@@ -200,11 +201,14 @@ class QwenOmni:
                                     {"type": "error", "error": str(err)}
                                 )
                                 continue
-
-                            if event_type == "session.created":
+                            
+                            if event_type in ("session.created", "session.updated"):
                                 sess = event.get("session", {})
-                                logger.info(f"Qwen session created: id={sess.get('id')}")
+                                logger.info(f"Qwen session ready: id={sess.get('id')}")
+                                state["audio_primed"] = True   
+                                state["session_ready"] = True
                                 continue
+
 
                             if event_type == "response.created":
                                 state["is_responding"] = True

@@ -5,11 +5,13 @@ import logging
 import os
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from gemini_live import GeminiLive
+from gemini_multimodal import GeminiMultimodal
+from qwen_multimodal import QwenMultimodal
 from qwen_omni import QwenOmni
 from google.genai import types
 
@@ -21,6 +23,7 @@ load_dotenv()
 # Configure logging - DEBUG for our modules, INFO for everything else
 logging.basicConfig(level=logging.INFO)
 logging.getLogger("gemini_live").setLevel(logging.DEBUG)
+logging.getLogger("gemini_multimodal").setLevel(logging.DEBUG)
 logging.getLogger("qwen_omni").setLevel(logging.DEBUG)
 logging.getLogger(__name__).setLevel(logging.DEBUG)
 logger = logging.getLogger(__name__)
@@ -32,6 +35,17 @@ MODEL = os.getenv("MODEL", "gemini-3.1-flash-live-preview")
 # Qwen-Omni Realtime configuration
 DASHSCOPE_API_KEY = os.getenv("DASHSCOPE_API_KEY")
 QWEN_MODEL = os.getenv("QWEN_MODEL", "qwen3.5-omni-plus-realtime")
+
+MULTIMODAL_MODELS = {
+    "gemini-3.1-flash-lite",
+    "gemini-3.1-pro-preview",
+    "gemini-3.5-flash",
+    "gemini-3-flash-preview",
+}
+
+QWEN_MULTIMODAL_MODELS = {
+    "qwen3.6-flash",  # maps to qwen-vl-max in QwenMultimodal
+}
 
 # Twilio config (optional — only needed for phone call integration)
 TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
@@ -72,6 +86,34 @@ tools = [
     types.Tool(function_declarations=[get_secret_keyword_declaration]),
     types.Tool(google_search=types.GoogleSearch()),
 ]
+
+toolsMultimodalGrounding = [
+    types.Tool(google_search=types.GoogleSearch()),
+]
+
+toolsMultimodalFunctionCall = [
+    types.Tool(
+        function_declarations=[
+            get_secret_keyword_declaration
+            ]
+        ),
+]
+
+qwen_multimodal_tools_function_call = [
+    {
+        "type": "function",
+        "function": {
+            "name": "get_secret_keyword",
+            "description": (
+                "Returns the current secret keyword. Call this whenever the user asks "
+                "what the secret keyword, password, or codeword is."
+            ),
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    }
+]
+
+
  
 tool_mapping = {
     "get_secret_keyword": get_secret_keyword,
@@ -95,6 +137,243 @@ app.mount("/static", StaticFiles(directory="frontend"), name="static")
 @app.get("/")
 async def root():
     return FileResponse("frontend/index.html")
+
+
+# @app.post("/multimodalV1")
+# async def multimodal_endpoint(
+#     model: str = Form(...),
+#     prompt: str = Form(default=""),
+#     media: UploadFile | None = File(default=None),
+#     audio: UploadFile | None = File(default=None),
+# ):
+#     """One-shot Gemini multimodal endpoint for text, uploaded media, and recorded audio."""
+#     if model == "qwen3.6-flash":
+#         raise HTTPException(
+#             status_code=501,
+#             detail="Qwen multimodal is not implemented yet. Choose a Gemini model for this endpoint.",
+#         )
+
+#     if model not in MULTIMODAL_MODELS:
+#         raise HTTPException(status_code=400, detail=f"Unsupported multimodal model: {model}")
+
+#     if not GEMINI_API_KEY:
+#         raise HTTPException(
+#             status_code=500,
+#             detail="GEMINI_API_KEY is not configured on the server.",
+#         )
+
+#     async def read_upload(upload: UploadFile | None):
+#         if not upload:
+#             return None
+
+#         data = await upload.read()
+#         if not data:
+#             return None
+
+#         return {
+#             "data": data,
+#             "mime_type": upload.content_type or "application/octet-stream",
+#             "filename": upload.filename,
+#         }
+
+#     media_part = await read_upload(media)
+#     audio_part = await read_upload(audio)
+
+#     if not (prompt.strip() or media_part or audio_part):
+#         raise HTTPException(
+#             status_code=400,
+#             detail="Provide text, a recording, or an uploaded media file.",
+#         )
+
+#     try:
+#         client = GeminiMultimodal(
+#             api_key=GEMINI_API_KEY,
+#             tools=toolsMultimodal,
+#             tool_mapping=tool_mapping,
+#         )
+#         result = await client.generate(
+#             model=model,
+#             prompt=prompt,
+#             media=media_part,
+#             audio=audio_part,
+#         )
+#         return result
+#     except HTTPException:
+#         raise
+#     except Exception as e:
+#         import traceback
+
+#         logger.error(f"Multimodal generation error: {type(e).__name__}: {e}\n{traceback.format_exc()}")
+#         raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
+
+# @app.post("/multimodal")
+# async def multimodal_endpoint(
+#     model: str = Form(...),
+#     prompt: str = Form(default=""),
+#     history: str = Form(default="[]"),
+#     mode: str = Form(default="function_call"),  # ← new
+#     media: UploadFile | None = File(default=None),
+#     audio: UploadFile | None = File(default=None),
+# ):
+#     """One-shot Gemini multimodal endpoint — text, image, audio, with tool use."""
+#     if model == "qwen3.6-flash":
+#         raise HTTPException(
+#             status_code=501,
+#             detail="Qwen multimodal is not implemented yet. Choose a Gemini model.",
+#         )
+#     if model not in MULTIMODAL_MODELS:
+#         raise HTTPException(status_code=400, detail=f"Unsupported multimodal model: {model}")
+#     if not GEMINI_API_KEY:
+#         raise HTTPException(status_code=500, detail="GEMINI_API_KEY is not configured.")
+
+#     # Pick tools based on mode
+#     if mode == "grounding":
+#         active_tools = toolsMultimodalGrounding
+#         active_tool_mapping = {}          # grounding has no client-side functions
+#     else:
+#         active_tools = toolsMultimodalFunctionCall
+#         active_tool_mapping = tool_mapping
+
+#     async def read_upload(upload: UploadFile | None) -> dict | None:
+#         if not upload:
+#             return None
+#         data = await upload.read()
+#         if not data:
+#             return None
+#         return {
+#             "data": data,
+#             "mime_type": upload.content_type or "application/octet-stream",
+#             "filename": upload.filename,
+#         }
+
+#     media_part = await read_upload(media)
+#     audio_part = await read_upload(audio)
+
+#     if not (prompt.strip() or media_part or audio_part):
+#         raise HTTPException(
+#             status_code=400,
+#             detail="Provide text, a recording, or an uploaded media file.",
+#         )
+
+#     try:
+#         parsed_history = json.loads(history)
+#     except Exception:
+#         logger.error("Failed to parse history JSON: %s", history)
+#         parsed_history = []
+
+#     logger.info("HISTORY RECEIVED: %s", json.dumps(parsed_history, indent=2))
+#     logger.info("MODE: %s | TOOLS: %s", mode, active_tools)
+
+#     try:
+#         client = GeminiMultimodal(
+#             api_key=GEMINI_API_KEY,
+#             tools=active_tools,
+#             tool_mapping=active_tool_mapping,
+#         )
+#         result = await client.generate(
+#             model=model,
+#             prompt=prompt,
+#             media=media_part,
+#             audio=audio_part,
+#             history=parsed_history,
+#         )
+#         return result
+#     except HTTPException:
+#         raise
+#     except Exception as e:
+#         import traceback
+#         logger.error("Multimodal error: %s\n%s", e, traceback.format_exc())
+#         raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
+
+
+@app.post("/multimodal")
+async def multimodal_endpoint(
+    model: str = Form(...),
+    prompt: str = Form(default=""),
+    history: str = Form(default="[]"),
+    mode: str = Form(default="function_call"),
+    media: UploadFile | None = File(default=None),
+    audio: UploadFile | None = File(default=None),
+):
+    is_qwen = True if model == "qwen3.6-flash" else False
+
+    if not is_qwen and model not in MULTIMODAL_MODELS:
+        raise HTTPException(status_code=400, detail=f"Unsupported multimodal model: {model}")
+
+    if is_qwen and not DASHSCOPE_API_KEY:
+        raise HTTPException(status_code=500, detail="DASHSCOPE_API_KEY is not configured.")
+
+    if not is_qwen and not GEMINI_API_KEY:
+        raise HTTPException(status_code=500, detail="GEMINI_API_KEY is not configured.")
+
+    async def read_upload(upload: UploadFile | None) -> dict | None:
+        if not upload:
+            return None
+        data = await upload.read()
+        if not data:
+            return None
+        return {
+            "data": data,
+            "mime_type": upload.content_type or "application/octet-stream",
+            "filename": upload.filename,
+        }
+
+    media_part = await read_upload(media)
+    audio_part = await read_upload(audio)
+
+    if not (prompt.strip() or media_part or audio_part):
+        raise HTTPException(status_code=400, detail="Provide text, a recording, or an uploaded media file.")
+
+    try:
+        parsed_history = json.loads(history)
+    except Exception:
+        logger.error("Failed to parse history JSON: %s", history)
+        parsed_history = []
+
+    logger.info("HISTORY RECEIVED: %s", json.dumps(parsed_history, indent=2))
+    logger.info("MODE: %s | MODEL: %s | PROVIDER: %s", mode, model, "qwen" if is_qwen else "gemini")
+
+    try:
+        if is_qwen:
+            active_tools    = qwen_multimodal_tools_function_call if mode == "function_call" else []
+            active_mapping  = tool_mapping if mode == "function_call" else {}
+            client = QwenMultimodal(
+                api_key=DASHSCOPE_API_KEY,
+                tools=active_tools,
+                tool_mapping=active_mapping,
+            )
+            result = await client.generate(
+                model=model,
+                prompt=prompt,
+                media=media_part,
+                audio=audio_part,
+                history=parsed_history,
+                mode=mode,
+            )
+        else:
+            active_tools   = toolsMultimodalGrounding if mode == "grounding" else toolsMultimodalFunctionCall
+            active_mapping = {} if mode == "grounding" else tool_mapping
+            client = GeminiMultimodal(
+                api_key=GEMINI_API_KEY,
+                tools=active_tools,
+                tool_mapping=active_mapping,
+            )
+            result = await client.generate(
+                model=model,
+                prompt=prompt,
+                media=media_part,
+                audio=audio_part,
+                history=parsed_history,
+            )
+
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        logger.error("Multimodal error: %s\n%s", e, traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
 
 
 @app.websocket("/ws")
