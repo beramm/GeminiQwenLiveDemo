@@ -36,10 +36,12 @@ Open your browser and navigate to:
 
 ```
 /
-├── main.py             # FastAPI server & WebSocket endpoint
-├── gemini_live.py      # Gemini Live API wrapper using Gen AI SDK
-├── qwen_omni.py        # Qwen omni realtime using dashcope api key
-├── requirements.txt    # Python dependencies
+├── main.py                 # FastAPI server & WebSocket endpoint
+├── gemini_live.py          # Gemini Live API wrapper using Gen AI SDK
+├── qwen_omni.py            # Qwen omni realtime using dashcope api key
+├── requirements.txt        # Python dependencies
+├── gemini_multimodal.py    # Gemini multimodal wrapper using Gen AI SDK
+├── qwen_multimodal.py      # Qwen multimodal using dashcope api key
 └── frontend/
     ├── index.html      # User Interface
     ├── main.js         # Application logic
