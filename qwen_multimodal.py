@@ -13,6 +13,7 @@ DASHSCOPE_API_URL = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat
 
 
 
+
 QWEN_MULTIMODAL_MODELS = {
     "qwen3.6-flash": "qwen3.6-flash",  # direct model ID, no alias needed
 }
@@ -32,7 +33,7 @@ class QwenMultimodal:
 
     def __init__(self, api_key: str, tools: list | None = None, tool_mapping: dict | None = None):
         self.api_key = api_key
-        self.tools = tools or []            # OpenAI-style tool dicts
+        self.tools = tools or []           
         self.tool_mapping = tool_mapping or {}
 
     async def generate(
@@ -48,6 +49,8 @@ class QwenMultimodal:
 
         # ── Build user content parts ─────────────────────────────────────────
         user_content: list[dict] = []
+        logger.info("Qwen generate | model=%s  mode=%s  prompt=%s  media=%s  audio=%s  history_len=%d",
+                    api_model, mode, prompt[:50], bool(media), bool(audio), len(history or []))
 
         if media:
             mime = media["mime_type"]
@@ -59,9 +62,12 @@ class QwenMultimodal:
                 })
             elif mime.startswith("video/"):
                 user_content.append({
-                    "type": "video_url",
-                    "video_url": {"url": f"data:{mime};base64,{b64}"},
+                    "type": "video",
+                    "video": f"data:video/mp4;base64,{b64}",
+                    "fps": 2
                 })
+                
+                
             else:
                 logger.warning("Unsupported media type for Qwen: %s", mime)
 
@@ -96,6 +102,9 @@ class QwenMultimodal:
 
         # ── Build request kwargs ─────────────────────────────────────────────
         request: dict = {"model": api_model, "messages": messages}
+        
+        logger.info("request: %s", json.dumps(request, indent=2)[:5000])
+        logger.info("content : %s", json.dumps(user_content, ensure_ascii=False)[:300])
 
         if mode == "grounding":
             request["enable_search"] = True

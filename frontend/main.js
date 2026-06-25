@@ -29,6 +29,12 @@ const multimodalImagePreview = document.getElementById("multimodal-image-preview
 const multimodalVideoPreview = document.getElementById("multimodal-video-preview");
 const multimodalMediaNote = document.getElementById("multimodal-media-note");
 const multimodalModelSelect = document.getElementById("multimodalModelSelect");
+// Near top with other consts
+const multimodalCameraBtn = document.getElementById("multimodalCameraBtn");
+const multimodalMicBtn = document.getElementById("multimodalMicBtn");
+
+let multimodalCameraStream = null;
+let multimodalMicStream = null;
 
 let currentGeminiMessageDiv = null;
 let currentUserMessageDiv = null;
@@ -40,13 +46,15 @@ let activeProvider = "gemini";
 let activeFlow = "realtime";
 let multimodalRecorder = null;
 let multimodalRecordStream = null;
-let multimodalAudioChunks = [];
-let multimodalAudioBlob = null;
+let multimodalVideoChunks = [];
+let multimodalVideoBlob = null;
 let multimodalUploadedFile = null;
 let multimodalObjectUrl = null;
 let activeMultimodalModel = "gemini-3.1-flash-lite";
 let activeMultimodalMode = "function_call";
 let discardMultimodalRecording = false;
+
+
 
 // Add near your other multimodal state vars
 let multimodalHistory = []; // { role: "user"|"model", parts: [{ text }] }
@@ -212,8 +220,8 @@ function resetMultimodalMediaPreview() {
 function updateMultimodalMediaNote() {
   const parts = [];
 
-  if (multimodalAudioBlob) {
-    parts.push("recorded audio");
+  if (multimodalVideoBlob) {
+    parts.push("recorded video");
   }
 
   if (multimodalUploadedFile) {
@@ -233,8 +241,8 @@ function clearMultimodalDraft() {
   multimodalSendBtn.disabled = false;
   multimodalTextInput.value = "";
   multimodalFile.value = "";
-  multimodalAudioChunks = [];
-  multimodalAudioBlob = null;
+  multimodalVideoChunks = [];
+  multimodalVideoBlob = null;
   multimodalUploadedFile = null;
   resetMultimodalMediaPreview();
   updateMultimodalMediaNote();
@@ -244,16 +252,25 @@ function resetMultimodalConversation() {
   clearMultimodalDraft();
   multimodalChatLog.innerHTML = "";
   multimodalHistory = [];
+  multimodalCameraBtn.textContent = "Start Camera";
+  multimodalMicBtn.textContent = "Start Mic";
+  multimodalVideoPreview.srcObject = null;
+  recordBtn.disabled = true;
   latestMultimodalInputTokens = 0;
   latestMultimodalOutputTokens = 0;
   updateMultimodalTokenDisplay();
 }
 
 function stopMultimodalRecordingTracks() {
-  if (multimodalRecordStream) {
-    multimodalRecordStream.getTracks().forEach((track) => track.stop());
-    multimodalRecordStream = null;
+  if (multimodalCameraStream) {
+    multimodalCameraStream.getTracks().forEach(t => t.stop());
+    multimodalCameraStream = null;
   }
+  if (multimodalMicStream) {
+    multimodalMicStream.getTracks().forEach(t => t.stop());
+    multimodalMicStream = null;
+  }
+  multimodalRecordStream = null;
 }
 
 function stopMultimodalRecording() {
@@ -275,45 +292,47 @@ recordBtn.onclick = async () => {
     return;
   }
 
-  try {
-    multimodalAudioBlob = null;
-    multimodalAudioChunks = [];
-    multimodalRecordStream = await navigator.mediaDevices.getUserMedia({
-      audio: true,
-    });
-    multimodalRecorder = new MediaRecorder(multimodalRecordStream);
+  // Build a combined stream from active camera + mic tracks
+  const tracks = [];
+  if (multimodalCameraStream) tracks.push(...multimodalCameraStream.getVideoTracks());
+  if (multimodalMicStream) tracks.push(...multimodalMicStream.getAudioTracks());
 
-    multimodalRecorder.ondataavailable = (event) => {
-      if (event.data.size > 0) {
-        multimodalAudioChunks.push(event.data);
-      }
-    };
-
-    multimodalRecorder.onstop = () => {
-      if (discardMultimodalRecording) {
-        multimodalAudioBlob = null;
-        multimodalAudioChunks = [];
-      } else {
-        multimodalAudioBlob = new Blob(multimodalAudioChunks, {
-          type: multimodalRecorder.mimeType || "audio/webm",
-        });
-      }
-      discardMultimodalRecording = false;
-      recordBtn.textContent = "Record";
-      multimodalSendBtn.disabled = false;
-      stopMultimodalRecordingTracks();
-      updateMultimodalMediaNote();
-    };
-
-    multimodalRecorder.start();
-    discardMultimodalRecording = false;
-    recordBtn.textContent = "Stop";
-    multimodalSendBtn.disabled = true;
-    multimodalMediaNote.textContent = "Recording audio. Click Stop to save it before sending.";
-  } catch (error) {
-    console.error("Could not start multimodal recording:", error);
-    alert("Could not start audio recording");
+  if (tracks.length === 0) {
+    alert("Start the camera first before recording.");
+    return;
   }
+
+  multimodalRecordStream = new MediaStream(tracks);
+  multimodalVideoBlob = null;
+  multimodalVideoChunks = [];
+
+  multimodalRecorder = new MediaRecorder(multimodalRecordStream, {
+    mimeType: "video/webm;codecs=vp8,opus",
+  });
+
+  multimodalRecorder.ondataavailable = (event) => {
+    if (event.data.size > 0) multimodalVideoChunks.push(event.data);
+  };
+
+  multimodalRecorder.onstop = () => {
+    if (discardMultimodalRecording) {
+      multimodalVideoBlob = null;
+      multimodalVideoChunks = [];
+    } else {
+      multimodalVideoBlob = new Blob(multimodalVideoChunks, { type: "video/webm" });
+      // keep camera preview live — don't swap srcObject
+    }
+    discardMultimodalRecording = false;
+    recordBtn.textContent = "Record";
+    multimodalSendBtn.disabled = false;
+    updateMultimodalMediaNote();
+  };
+
+  multimodalRecorder.start();
+  discardMultimodalRecording = false;
+  recordBtn.textContent = "Stop";
+  multimodalSendBtn.disabled = true;
+  multimodalMediaNote.textContent = "Recording… Click Stop to save.";
 };
 
 multimodalFile.addEventListener("change", () => {
@@ -346,6 +365,8 @@ multimodalModelSelect.addEventListener("change", () => {
   statusDiv.textContent = `Multimodal Preview (${activeMultimodalModel} · ${activeMultimodalMode})`;
 });
 
+
+
 // Connect Button Handler
 connectBtn.onclick = async () => {
   if (activeFlow !== "realtime") return;
@@ -367,6 +388,52 @@ connectBtn.onclick = async () => {
     statusDiv.textContent = "Connection Failed: " + error.message;
     statusDiv.className = "status error";
     connectBtn.disabled = false;
+  }
+};
+
+// Camera toggle
+multimodalCameraBtn.onclick = async () => {
+  if (multimodalCameraStream) {
+    multimodalCameraStream.getVideoTracks().forEach(t => t.stop());
+    multimodalCameraStream = null;
+    multimodalVideoPreview.srcObject = null;
+    multimodalVideoPreview.classList.add("hidden");
+    multimodalPlaceholder.classList.remove("hidden");
+    multimodalCameraBtn.textContent = "Start Camera";
+    recordBtn.disabled = true;
+    return;
+  }
+
+  try {
+    multimodalCameraStream = await navigator.mediaDevices.getUserMedia({ video: true });
+    multimodalVideoPreview.muted = true;
+    multimodalVideoPreview.srcObject = multimodalCameraStream;
+    multimodalVideoPreview.classList.remove("hidden");
+    multimodalPlaceholder.classList.add("hidden");
+    multimodalVideoPreview.play().catch(e => console.error("play() failed:", e));
+    multimodalCameraBtn.textContent = "Stop Camera";
+    recordBtn.disabled = false;
+  } catch (e) {
+    console.error(e);
+    alert("Could not access camera — check permissions");
+  }
+};
+
+// Mic toggle
+multimodalMicBtn.onclick = async () => {
+  if (multimodalMicStream) {
+    multimodalMicStream.getAudioTracks().forEach(t => t.stop());
+    multimodalMicStream = null;
+    multimodalMicBtn.textContent = "Start Mic";
+    return;
+  }
+
+  try {
+    multimodalMicStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    multimodalMicBtn.textContent = "Stop Mic";
+  } catch (e) {
+    console.error(e);
+    alert("Could not access microphone — check permissions");
   }
 };
 
@@ -477,10 +544,10 @@ function sendText() {
 
 async function sendMultimodalPreview() {
   const text = multimodalTextInput.value.trim();
-  const hasAudio = Boolean(multimodalAudioBlob);
+  const hasVideo = Boolean(multimodalVideoBlob);
   const hasMedia = Boolean(multimodalUploadedFile);
   console.log(JSON.stringify(multimodalHistory));
-  if (!text && !hasAudio && !hasMedia) {
+  if (!text && !hasVideo && !hasMedia) {
     return;
   }
 
@@ -492,8 +559,8 @@ async function sendMultimodalPreview() {
     requestParts.push(text);
   }
 
-  if (hasAudio) {
-    requestParts.push("[recorded audio]");
+  if (hasVideo) {
+    requestParts.push("[recorded video]");
   }
 
   if (hasMedia) {
@@ -514,11 +581,11 @@ async function sendMultimodalPreview() {
     formData.append("media", multimodalUploadedFile);
   }
 
-  if (hasAudio) {
-    const audioFile = new File([multimodalAudioBlob], "recording.webm", {
-      type: multimodalAudioBlob.type || "audio/webm",
+  if (hasVideo) {
+    const videoFile = new File([multimodalVideoBlob], "recording.webm", {
+      type: "video/webm",
     });
-    formData.append("audio", audioFile);
+    formData.append("media", videoFile);   // ← "media" not "audio"
   }
 
   multimodalSendBtn.disabled = true;
@@ -579,6 +646,11 @@ function resetUI() {
   activeMultimodalModel = parsedOnReset.model;
   activeMultimodalMode = parsedOnReset.mode;
   connectBtn.disabled = false;
+
+  multimodalCameraBtn.textContent = "Start Camera";
+  multimodalMicBtn.textContent = "Start Mic";
+  multimodalVideoPreview.srcObject = null;
+  recordBtn.disabled = true;
 
   latestInputTokens = 0;
   latestOutputTokens = 0;

@@ -173,3 +173,6 @@ class GeminiMultimodal:
                     _add(fc)
 
         return calls
+    
+    
+    

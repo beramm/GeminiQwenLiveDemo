@@ -136,14 +136,18 @@
           <div class="left-panel">
             <div class="video-container multimodal-media-container">
               <div id="multimodal-placeholder">
-                Record audio or upload photo/video
+                Record video or upload photo/video
               </div>
               <img id="multimodal-image-preview" class="media-preview hidden" alt="Uploaded preview" />
-              <video id="multimodal-video-preview" class="media-preview hidden" controls></video>
+              <video id="multimodal-video-preview" class="media-preview hidden" controls autoplay playsinline
+                muted></video>
+
             </div>
 
             <div class="controls">
-              <button id="recordBtn" class="btn icon-btn">Record</button>
+              <button id="multimodalCameraBtn" class="btn icon-btn">Start Camera</button>
+              <button id="multimodalMicBtn" class="btn icon-btn">Start Mic</button>
+              <button id="recordBtn" class="btn icon-btn" disabled>Record</button>
               <label class="btn icon-btn upload-btn">
                 Upload Media
                 <input type="file" id="multimodalFile" accept="image/*,video/*" />
