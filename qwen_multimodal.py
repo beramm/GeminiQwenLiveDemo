@@ -62,9 +62,10 @@ class QwenMultimodal:
                 })
             elif mime.startswith("video/"):
                 user_content.append({
-                    "type": "video",
-                    "video": f"data:video/mp4;base64,{b64}",
-                    "fps": 2
+                    "type": "video_url",
+                    "video_url": {
+                        "url": f"data:video/mp4;base64,{b64}"
+                    },
                 })
                 
                 

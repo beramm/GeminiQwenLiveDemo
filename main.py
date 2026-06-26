@@ -3,6 +3,8 @@ import base64
 import json
 import logging
 import os
+from urllib.parse import quote, urlencode
+from urllib.request import Request, urlopen
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect
@@ -71,6 +73,178 @@ SECRET_KEYWORD = "chandora the explorer"
 def get_secret_keyword() -> str:
     print(">>> [local] get_secret_keyword() was actually executed locally")
     return SECRET_KEYWORD
+
+
+WEATHER_CODES = {
+    0: "clear sky",
+    1: "mainly clear",
+    2: "partly cloudy",
+    3: "overcast",
+    45: "fog",
+    48: "depositing rime fog",
+    51: "light drizzle",
+    53: "moderate drizzle",
+    55: "dense drizzle",
+    56: "light freezing drizzle",
+    57: "dense freezing drizzle",
+    61: "slight rain",
+    63: "moderate rain",
+    65: "heavy rain",
+    66: "light freezing rain",
+    67: "heavy freezing rain",
+    71: "slight snowfall",
+    73: "moderate snowfall",
+    75: "heavy snowfall",
+    77: "snow grains",
+    80: "slight rain showers",
+    81: "moderate rain showers",
+    82: "violent rain showers",
+    85: "slight snow showers",
+    86: "heavy snow showers",
+    95: "thunderstorm",
+    96: "thunderstorm with slight hail",
+    99: "thunderstorm with heavy hail",
+}
+
+
+def _fetch_json(url: str) -> dict:
+    request = Request(url, headers={"User-Agent": "GeminiQwenLiveDemo/1.0"})
+    with urlopen(request, timeout=10) as response:
+        return json.load(response)
+
+
+def getweather(location: str) -> dict:
+    """Return the current weather for a city or place name."""
+    location = location.strip()
+    if not location:
+        raise ValueError("location must not be empty")
+
+    geocoding_query = urlencode(
+        {
+            "name": location,
+            "count": 1,
+            "language": "en",
+            "format": "json",
+        }
+    )
+    geocoding = _fetch_json(
+        f"https://geocoding-api.open-meteo.com/v1/search?{geocoding_query}"
+    )
+    matches = geocoding.get("results") or []
+    if not matches:
+        raise ValueError(f"weather location not found: {location}")
+
+    place = matches[0]
+    forecast_query = urlencode(
+        {
+            "latitude": place["latitude"],
+            "longitude": place["longitude"],
+            "current": (
+                "temperature_2m,relative_humidity_2m,apparent_temperature,"
+                "weather_code,wind_speed_10m"
+            ),
+            "timezone": "auto",
+        }
+    )
+    weather = _fetch_json(
+        f"https://api.open-meteo.com/v1/forecast?{forecast_query}"
+    )
+    current = weather.get("current") or {}
+    units = weather.get("current_units") or {}
+    weather_code = current.get("weather_code")
+
+    result = {
+        "location": ", ".join(
+            part
+            for part in (
+                place.get("name"),
+                place.get("admin1"),
+                place.get("country"),
+            )
+            if part
+        ),
+        "coordinates": {
+            "latitude": place["latitude"],
+            "longitude": place["longitude"],
+        },
+        "observed_at": current.get("time"),
+        "timezone": weather.get("timezone"),
+        "condition": WEATHER_CODES.get(weather_code, "unknown"),
+        "temperature": {
+            "value": current.get("temperature_2m"),
+            "unit": units.get("temperature_2m", "°C"),
+        },
+        "feels_like": {
+            "value": current.get("apparent_temperature"),
+            "unit": units.get("apparent_temperature", "°C"),
+        },
+        "humidity": {
+            "value": current.get("relative_humidity_2m"),
+            "unit": units.get("relative_humidity_2m", "%"),
+        },
+        "wind_speed": {
+            "value": current.get("wind_speed_10m"),
+            "unit": units.get("wind_speed_10m", "km/h"),
+        },
+        "source": "Open-Meteo",
+    }
+    logger.info("getweather(%r) result: %s", location, result)
+    return result
+
+
+def convert_currency(
+    amount: float,
+    from_currency: str,
+    to_currency: str,
+) -> dict:
+    """Convert an amount between two ISO 4217 currency codes."""
+    try:
+        amount = float(amount)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("amount must be a valid number") from exc
+
+    from_currency = from_currency.strip().upper()
+    to_currency = to_currency.strip().upper()
+    for field_name, currency in (
+        ("from_currency", from_currency),
+        ("to_currency", to_currency),
+    ):
+        if len(currency) != 3 or not currency.isalpha():
+            raise ValueError(
+                f"{field_name} must be a three-letter ISO currency code"
+            )
+
+    exchange_data = _fetch_json(
+        f"https://open.er-api.com/v6/latest/{quote(from_currency)}"
+    )
+    if exchange_data.get("result") != "success":
+        error_type = exchange_data.get("error-type", "exchange rate unavailable")
+        raise ValueError(f"could not get exchange rate: {error_type}")
+
+    rates = exchange_data.get("rates") or {}
+    if to_currency not in rates:
+        raise ValueError(f"unsupported target currency: {to_currency}")
+
+    rate = float(rates[to_currency])
+    converted_amount = amount * rate
+    result = {
+        "amount": amount,
+        "from_currency": from_currency,
+        "to_currency": to_currency,
+        "exchange_rate": rate,
+        "converted_amount": round(converted_amount, 6),
+        "last_updated": exchange_data.get("time_last_update_utc"),
+        "next_update": exchange_data.get("time_next_update_utc"),
+        "source": "ExchangeRate-API open endpoint",
+    }
+    logger.info(
+        "convert_currency(%s, %s, %s) result: %s",
+        amount,
+        from_currency,
+        to_currency,
+        result,
+    )
+    return result
  
  
 get_secret_keyword_declaration = types.FunctionDeclaration(
@@ -81,9 +255,59 @@ get_secret_keyword_declaration = types.FunctionDeclaration(
     ),
     parameters=types.Schema(type=types.Type.OBJECT, properties={}),
 )
+
+getweather_declaration = types.FunctionDeclaration(
+    name="getweather",
+    description=(
+        "Gets the current weather for a city or place. Call this whenever the "
+        "user asks about current weather, temperature, humidity, or wind."
+    ),
+    parameters=types.Schema(
+        type=types.Type.OBJECT,
+        properties={
+            "location": types.Schema(
+                type=types.Type.STRING,
+                description="City or place name, for example Jakarta or Bandung.",
+            )
+        },
+        required=["location"],
+    ),
+)
+
+convert_currency_declaration = types.FunctionDeclaration(
+    name="convert_currency",
+    description=(
+        "Converts a monetary amount from one currency to another using the "
+        "latest available exchange rate."
+    ),
+    parameters=types.Schema(
+        type=types.Type.OBJECT,
+        properties={
+            "amount": types.Schema(
+                type=types.Type.NUMBER,
+                description="The monetary amount to convert.",
+            ),
+            "from_currency": types.Schema(
+                type=types.Type.STRING,
+                description="Source ISO 4217 currency code, for example USD or IDR.",
+            ),
+            "to_currency": types.Schema(
+                type=types.Type.STRING,
+                description="Target ISO 4217 currency code, for example EUR or IDR.",
+            ),
+        },
+        required=["amount", "from_currency", "to_currency"],
+    ),
+)
  
 tools = [
-    types.Tool(function_declarations=[get_secret_keyword_declaration]),
+    types.Tool(
+        function_declarations=[
+            get_secret_keyword_declaration,
+            getweather_declaration,
+            convert_currency_declaration,
+        ]
+    ),
     types.Tool(google_search=types.GoogleSearch()),
 ]
 
@@ -94,7 +318,9 @@ toolsMultimodalGrounding = [
 toolsMultimodalFunctionCall = [
     types.Tool(
         function_declarations=[
-            get_secret_keyword_declaration
+            get_secret_keyword_declaration,
+            getweather_declaration,
+            convert_currency_declaration,
             ]
         ),
 ]
@@ -110,13 +336,63 @@ qwen_multimodal_tools_function_call = [
             ),
             "parameters": {"type": "object", "properties": {}, "required": []},
         },
-    }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "getweather",
+            "description": (
+                "Gets the current weather for a city or place. Call this whenever "
+                "the user asks about current weather, temperature, humidity, or wind."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "location": {
+                        "type": "string",
+                        "description": "City or place name, for example Jakarta or Bandung.",
+                    }
+                },
+                "required": ["location"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "convert_currency",
+            "description": (
+                "Converts a monetary amount from one currency to another using "
+                "the latest available exchange rate."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "amount": {
+                        "type": "number",
+                        "description": "The monetary amount to convert.",
+                    },
+                    "from_currency": {
+                        "type": "string",
+                        "description": "Source ISO currency code, for example USD or IDR.",
+                    },
+                    "to_currency": {
+                        "type": "string",
+                        "description": "Target ISO currency code, for example EUR or IDR.",
+                    },
+                },
+                "required": ["amount", "from_currency", "to_currency"],
+            },
+        },
+    },
 ]
 
 
  
 tool_mapping = {
     "get_secret_keyword": get_secret_keyword,
+    "getweather": getweather,
+    "convert_currency": convert_currency,
 }
 
 qwen_tools = [
@@ -127,7 +403,49 @@ qwen_tools = [
             "what the secret keyword, password, or codeword is."
         ),
         "parameters": {"type": "object", "properties": {}},
-    }
+    },
+    {
+        "name": "getweather",
+        "description": (
+            "Gets the current weather for a city or place. Call this whenever "
+            "the user asks about current weather, temperature, humidity, or wind."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "location": {
+                    "type": "string",
+                    "description": "City or place name, for example Jakarta or Bandung.",
+                }
+            },
+            "required": ["location"],
+        },
+    },
+    {
+        "name": "convert_currency",
+        "description": (
+            "Converts a monetary amount from one currency to another using "
+            "the latest available exchange rate."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "type": "number",
+                    "description": "The monetary amount to convert.",
+                },
+                "from_currency": {
+                    "type": "string",
+                    "description": "Source ISO currency code, for example USD or IDR.",
+                },
+                "to_currency": {
+                    "type": "string",
+                    "description": "Target ISO currency code, for example EUR or IDR.",
+                },
+            },
+            "required": ["amount", "from_currency", "to_currency"],
+        },
+    },
 ]
 
 # Serve static files
@@ -487,4 +805,4 @@ if __name__ == "__main__":
     import uvicorn
 
     port = int(os.getenv("PORT", 8000))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=True)
