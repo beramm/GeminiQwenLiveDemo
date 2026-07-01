@@ -749,6 +749,34 @@ function resetItineraryResults() {
 
 structuredClearBtn.onclick = resetItineraryResults;
 
+/**
+ * Parse a schema validation error string into its path and message components.
+ * Input format: "Schema validation error at root{path}: {message}"
+ * Returns { path: string|null, message: string }
+ */
+function parseValidationError(errorStr) {
+  if (!errorStr) return { path: null, message: errorStr || "" };
+  const m = errorStr.match(/^Schema validation error at root([^:]*): ([\s\S]+)$/);
+  if (!m) return { path: null, message: errorStr };
+  return { path: m[1], message: m[2] };
+}
+
+/**
+ * Navigate a parsed JSON object using a path string like ".days[1].activities[0]".
+ * Returns the value at that path, or undefined if not found.
+ */
+function getAtPath(obj, pathStr) {
+  if (!pathStr) return obj;
+  let cur = obj;
+  const regex = /\.([^.\[]+)|\[(\d+)\]/g;
+  let m;
+  while ((m = regex.exec(pathStr)) !== null) {
+    if (cur == null || typeof cur !== "object") return undefined;
+    cur = m[1] !== undefined ? cur[m[1]] : cur[parseInt(m[2], 10)];
+  }
+  return cur;
+}
+
 function renderRunCard(run) {
   const card = document.createElement("div");
   card.className = `run-card ${run.valid ? "valid" : "invalid"}`;
@@ -770,6 +798,26 @@ function renderRunCard(run) {
     errorEl.className = "run-error";
     errorEl.textContent = run.error || "Unknown error";
     card.appendChild(errorEl);
+
+    // If partial_data is present (JSON parsed but schema invalid), show context at error path.
+    if (run.partial_data != null) {
+      const { path, message } = parseValidationError(run.error);
+      if (path !== null) {
+        const ctxVal = getAtPath(run.partial_data, path);
+        if (ctxVal !== undefined) {
+          const ctx = document.createElement("div");
+          ctx.className = "run-error-context";
+          const label = document.createElement("div");
+          label.className = "run-error-context-label";
+          label.textContent = `Context at root${path || " (root)"}:`;
+          const pre = document.createElement("pre");
+          pre.textContent = JSON.stringify(ctxVal, null, 2);
+          ctx.appendChild(label);
+          ctx.appendChild(pre);
+          card.appendChild(ctx);
+        }
+      }
+    }
   }
 
   if (run.usage) {
@@ -779,11 +827,13 @@ function renderRunCard(run) {
     card.appendChild(usageEl);
   }
 
-  const raw = run.data ? JSON.stringify(run.data, null, 2) : (run.raw_text || "(no output)");
+  const raw = run.data ? JSON.stringify(run.data, null, 2)
+    : run.partial_data ? JSON.stringify(run.partial_data, null, 2)
+    : (run.raw_text || "(no output)");
   const details = document.createElement("details");
   details.className = "run-details";
   const summary = document.createElement("summary");
-  summary.textContent = run.valid ? "View itinerary JSON" : "View raw output";
+  summary.textContent = run.valid ? "View itinerary JSON" : "View full output";
   const pre = document.createElement("pre");
   pre.textContent = raw;
   details.appendChild(summary);

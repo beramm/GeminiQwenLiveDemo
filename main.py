@@ -616,7 +616,7 @@ async def multimodal_endpoint(
     media: UploadFile | None = File(default=None),
     audio: UploadFile | None = File(default=None),
 ):
-    is_qwen = True if model == "qwen3.6-flash" else False
+    is_qwen = model in QWEN_MULTIMODAL_MODELS
 
     if not is_qwen and model not in MULTIMODAL_MODELS:
         raise HTTPException(status_code=400, detail=f"Unsupported multimodal model: {model}")
@@ -793,6 +793,9 @@ async def itinerary_structured_endpoint(
             "valid": is_valid,
             "error": error,
             "data": parsed if is_valid else None,
+            # partial_data: present when JSON parsed OK but failed schema validation —
+            # lets the frontend navigate to the exact error path and show context.
+            "partial_data": parsed if (not is_valid and parsed is not None) else None,
             "raw_text": result["text"],
             "usage": result.get("usage"),
             "latency_seconds": round(asyncio.get_event_loop().time() - start, 2),

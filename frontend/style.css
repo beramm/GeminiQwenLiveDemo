@@ -707,6 +707,30 @@ input[type="text"] {
   word-break: break-word;
 }
 
+.run-error-context {
+  background: #fff8e1;
+  border: 1px solid #f5c518;
+  border-radius: 4px;
+  padding: 6px 8px;
+}
+
+.run-error-context-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #7a5c00;
+  margin-bottom: 4px;
+}
+
+.run-error-context pre {
+  margin: 0;
+  max-height: 180px;
+  overflow: auto;
+  font-size: 0.72rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: #3a3000;
+}
+
 .run-usage {
   font-size: 0.72rem;
   color: var(--text-secondary);

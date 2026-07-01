@@ -108,7 +108,12 @@ class QwenMultimodal:
 
         # ── Build request kwargs ─────────────────────────────────────────────
         request: dict = {"model": api_model, "messages": messages}
-        
+
+        is_streaming_required = api_model in QWEN_STREAMING_REQUIRED_MODELS
+        if is_streaming_required:
+            request["stream"] = True
+            request["stream_options"] = {"include_usage": True}
+
         logger.info("request: %s", json.dumps(request, indent=2)[:5000])
         logger.info("content : %s", json.dumps(user_content, ensure_ascii=False)[:300])
 
@@ -128,67 +133,110 @@ class QwenMultimodal:
         }
 
         tool_calls_log: list[dict] = []
+        text = ""
+        raw_usage: dict = {}
 
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            # ── First call ───────────────────────────────────────────────────
-            response_data = await self._post(client, headers, request)
-            logger.info("Qwen initial response | %s", json.dumps(response_data, ensure_ascii=False)[:300])
+        async with httpx.AsyncClient(timeout=120.0 if is_streaming_required else 60.0) as client:
+            if is_streaming_required:
+                # ── Streaming path (Omni models) ─────────────────────────────
+                text, streamed_calls, usage_chunk = await self._post_stream(client, headers, request)
+                if usage_chunk:
+                    raw_usage = usage_chunk
 
-            # ── Agentic tool-call loop (function_call mode only) ─────────────
-            if mode == "function_call":
-                for _round in range(self.MAX_TOOL_ROUNDS):
-                    choice  = response_data["choices"][0]
-                    message = choice["message"]
-                    calls   = message.get("tool_calls") or []
-
-                    if not calls:
-                        logger.info("No tool calls found")
-                        break
-
-                    # Append assistant turn with tool_calls
-                    messages.append(message)
-
-                    for tc in calls:
-                        func_name = tc["function"]["name"]
-                        try:
-                            args = json.loads(tc["function"].get("arguments", "{}"))
-                        except json.JSONDecodeError:
-                            args = {}
-
-                        logger.info("Tool call [%d]: %s  args=%s", _round + 1, func_name, args)
-
-                        if func_name not in self.tool_mapping:
-                            result = f"Error: unknown tool '{func_name}'"
-                        else:
-                            try:
-                                fn = self.tool_mapping[func_name]
-                                result = await fn(**args) if inspect.iscoroutinefunction(fn) else fn(**args)
-                            except Exception as exc:
-                                result = f"Error: {exc}"
-                                logger.exception("Tool '%s' raised", func_name)
-
-                        tool_calls_log.append({"name": func_name, "args": args, "result": result})
+                if mode == "function_call":
+                    for _round in range(self.MAX_TOOL_ROUNDS):
+                        if not streamed_calls:
+                            break
 
                         messages.append({
-                            "role": "tool",
-                            "tool_call_id": tc["id"],
-                            "content": str(result),
+                            "role": "assistant",
+                            "content": text or "",
+                            "tool_calls": streamed_calls,
                         })
 
-                    request["messages"] = messages
-                    response_data = await self._post(client, headers, request)
+                        for tc in streamed_calls:
+                            func_name = tc["function"]["name"]
+                            try:
+                                args = json.loads(tc["function"].get("arguments", "{}"))
+                            except json.JSONDecodeError:
+                                args = {}
+                            logger.info("Tool call [%d]: %s  args=%s", _round + 1, func_name, args)
 
-        # ── Extract final text + usage ────────────────────────────────────────
-        final_choice = response_data["choices"][0]
-        text = (
-            final_choice.get("message", {}).get("content")
-            or final_choice.get("text")
-            or ""
-        )
-        if isinstance(text, list):
-            text = " ".join(p.get("text", "") for p in text if isinstance(p, dict))
+                            if func_name not in self.tool_mapping:
+                                result = f"Error: unknown tool '{func_name}'"
+                            else:
+                                try:
+                                    fn = self.tool_mapping[func_name]
+                                    result = await fn(**args) if inspect.iscoroutinefunction(fn) else fn(**args)
+                                except Exception as exc:
+                                    result = f"Error: {exc}"
+                                    logger.exception("Tool '%s' raised", func_name)
 
-        raw_usage = response_data.get("usage", {})
+                            tool_calls_log.append({"name": func_name, "args": args, "result": result})
+                            messages.append({
+                                "role": "tool",
+                                "tool_call_id": tc["id"],
+                                "content": str(result),
+                            })
+
+                        request["messages"] = messages
+                        text, streamed_calls, usage_chunk = await self._post_stream(client, headers, request)
+                        if usage_chunk:
+                            raw_usage = usage_chunk
+            else:
+                # ── Non-streaming path ───────────────────────────────────────
+                response_data = await self._post(client, headers, request)
+                logger.info("Qwen initial response | %s", json.dumps(response_data, ensure_ascii=False)[:300])
+
+                if mode == "function_call":
+                    for _round in range(self.MAX_TOOL_ROUNDS):
+                        choice  = response_data["choices"][0]
+                        message = choice["message"]
+                        calls   = message.get("tool_calls") or []
+
+                        if not calls:
+                            logger.info("No tool calls found")
+                            break
+
+                        messages.append(message)
+
+                        for tc in calls:
+                            func_name = tc["function"]["name"]
+                            try:
+                                args = json.loads(tc["function"].get("arguments", "{}"))
+                            except json.JSONDecodeError:
+                                args = {}
+                            logger.info("Tool call [%d]: %s  args=%s", _round + 1, func_name, args)
+
+                            if func_name not in self.tool_mapping:
+                                result = f"Error: unknown tool '{func_name}'"
+                            else:
+                                try:
+                                    fn = self.tool_mapping[func_name]
+                                    result = await fn(**args) if inspect.iscoroutinefunction(fn) else fn(**args)
+                                except Exception as exc:
+                                    result = f"Error: {exc}"
+                                    logger.exception("Tool '%s' raised", func_name)
+
+                            tool_calls_log.append({"name": func_name, "args": args, "result": result})
+                            messages.append({
+                                "role": "tool",
+                                "tool_call_id": tc["id"],
+                                "content": str(result),
+                            })
+
+                        request["messages"] = messages
+                        response_data = await self._post(client, headers, request)
+
+                final_choice = response_data["choices"][0]
+                text = (
+                    final_choice.get("message", {}).get("content")
+                    or final_choice.get("text")
+                    or ""
+                )
+                if isinstance(text, list):
+                    text = " ".join(p.get("text", "") for p in text if isinstance(p, dict))
+                raw_usage = response_data.get("usage", {})
         usage = {
             "input_tokens":  raw_usage.get("prompt_tokens", 0),
             "output_tokens": raw_usage.get("completion_tokens", 0),
