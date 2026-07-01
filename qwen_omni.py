@@ -77,10 +77,10 @@ class QwenOmni:
                         "prefix_padding_ms": 500,
                         "silence_duration_ms": 800,
                     },
-                    # "enable_search": True,          
-                    # "search_options": {
-                    #     "enable_source": True        
-                    # },
+                    "enable_search": True,          
+                    "search_options": {
+                        "enable_source": True        
+                    },
                     "tools": [
                         {
                             "type": "function",

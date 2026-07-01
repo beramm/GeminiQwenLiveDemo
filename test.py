@@ -1,13 +1,6 @@
-from google import genai
+import os
 
-client = genai.Client(
-    vertexai=True,
-    project="tsel-ai-translation-project",
-    location="us-central1"
-)
+path = "/Users/chandra/Work/ai-assessment/gemini-live-api-examples/gemini-live-genai-python-sdk/testVideo.mov"
 
-models = client.models.list()
-
-for m in models:
-    if "3.1" in m.name.lower():
-        print(m.name)
+print("exists:", os.path.exists(path))
+print("size:", os.path.getsize(path))

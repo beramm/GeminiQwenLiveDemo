@@ -6,6 +6,7 @@ import os
 from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
+import jsonschema
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,6 +14,7 @@ from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from gemini_live import GeminiLive
 from gemini_multimodal import GeminiMultimodal
+from itinerary_schema import ITINERARY_SCHEMA
 from qwen_multimodal import QwenMultimodal
 from qwen_omni import QwenOmni
 from google.genai import types
@@ -47,6 +49,7 @@ MULTIMODAL_MODELS = {
 
 QWEN_MULTIMODAL_MODELS = {
     "qwen3.6-flash",  # maps to qwen-vl-max in QwenMultimodal
+    "qwen3.5-omni-flash",  # audio/omni-capable, used by the itinerary structured-output feature
 }
 
 # Twilio config (optional — only needed for phone call integration)
@@ -692,6 +695,119 @@ async def multimodal_endpoint(
         import traceback
         logger.error("Multimodal error: %s\n%s", e, traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
+
+
+def strip_code_fences(text: str) -> str:
+    """Strip a leading and/or trailing markdown code fence (```json ... ```) if present.
+    Handles leading-only, trailing-only, both, or neither — some models (observed live
+    on qwen3.5-omni-flash) emit a stray trailing ``` with no matching opening fence."""
+    cleaned = (text or "").strip()
+    if cleaned.startswith("```"):
+        cleaned = cleaned[3:]
+        if cleaned.lower().startswith("json"):
+            cleaned = cleaned[4:]
+        cleaned = cleaned.lstrip("\n")
+    if cleaned.endswith("```"):
+        cleaned = cleaned[:-3]
+    return cleaned.strip()
+
+
+def validate_itinerary(raw_text: str) -> tuple[dict | None, bool, str | None]:
+    """Parse + validate raw model text against ITINERARY_SCHEMA.
+    Returns (parsed_or_None, is_valid, error_message_or_None)."""
+    cleaned = strip_code_fences(raw_text)
+    try:
+        parsed = json.loads(cleaned)
+    except json.JSONDecodeError as exc:
+        return None, False, f"JSON parse error: {exc}"
+
+    try:
+        jsonschema.validate(parsed, ITINERARY_SCHEMA)
+    except jsonschema.ValidationError as exc:
+        path = "".join(f"[{p}]" if isinstance(p, int) else f".{p}" for p in exc.absolute_path)
+        message = exc.message
+        # jsonschema embeds the full failing instance in the message for type errors
+        # (e.g. a giant nested dict before "is not of type 'object'") — the diagnostic
+        # clause is reliably at the tail, so truncate from the front; full data is
+        # still available via raw_text in the response.
+        if len(message) > 200:
+            message = "…" + message[-200:]
+        return parsed, False, f"Schema validation error at root{path}: {message}"
+
+    return parsed, True, None
+
+
+@app.post("/itinerary/structured")
+async def itinerary_structured_endpoint(
+    model: str = Form(...),
+    destination: str = Form(...),
+    days: int = Form(...),
+    preference: str = Form(...),
+    runs: int = Form(default=3),
+):
+    """Itinerary structured-output consistency test: calls the chosen model `runs`
+    times with identical input, validates each run independently against
+    ITINERARY_SCHEMA, returns per-run pass/fail with the real error for failures.
+    """
+    is_qwen = model in QWEN_MULTIMODAL_MODELS
+
+    if not is_qwen and model not in MULTIMODAL_MODELS:
+        raise HTTPException(status_code=400, detail=f"Unsupported model: {model}")
+
+    if is_qwen and not DASHSCOPE_API_KEY:
+        raise HTTPException(status_code=500, detail="DASHSCOPE_API_KEY is not configured.")
+
+    if not is_qwen and not GEMINI_API_KEY:
+        raise HTTPException(status_code=500, detail="GEMINI_API_KEY is not configured.")
+
+    runs = max(1, min(runs, 5))
+
+    async def run_once(run_index: int) -> dict:
+        start = asyncio.get_event_loop().time()
+        try:
+            if is_qwen:
+                client = QwenMultimodal(api_key=DASHSCOPE_API_KEY)
+                result = await client.generate_itinerary(
+                    model=model, destination=destination, days=days, preference=preference,
+                )
+            else:
+                client = GeminiMultimodal(api_key=GEMINI_API_KEY)
+                result = await client.generate_itinerary(
+                    model=model, destination=destination, days=days, preference=preference,
+                )
+        except Exception as exc:
+            logger.error("Itinerary run %d failed: %s", run_index, exc)
+            return {
+                "run_index": run_index,
+                "valid": False,
+                "error": f"{type(exc).__name__}: {exc}",
+                "data": None,
+                "raw_text": None,
+                "usage": None,
+                "latency_seconds": round(asyncio.get_event_loop().time() - start, 2),
+            }
+
+        parsed, is_valid, error = validate_itinerary(result["text"])
+        return {
+            "run_index": run_index,
+            "valid": is_valid,
+            "error": error,
+            "data": parsed if is_valid else None,
+            "raw_text": result["text"],
+            "usage": result.get("usage"),
+            "latency_seconds": round(asyncio.get_event_loop().time() - start, 2),
+        }
+
+    run_results = await asyncio.gather(*(run_once(i) for i in range(runs)))
+    valid_count = sum(1 for r in run_results if r["valid"])
+
+    return {
+        "model": model,
+        "provider": "qwen" if is_qwen else "gemini",
+        "runs": run_results,
+        "valid_count": valid_count,
+        "total_runs": runs,
+    }
 
 
 @app.websocket("/ws")

@@ -29,9 +29,21 @@ const multimodalImagePreview = document.getElementById("multimodal-image-preview
 const multimodalVideoPreview = document.getElementById("multimodal-video-preview");
 const multimodalMediaNote = document.getElementById("multimodal-media-note");
 const multimodalModelSelect = document.getElementById("multimodalModelSelect");
-// Near top with other consts
 const multimodalCameraBtn = document.getElementById("multimodalCameraBtn");
 const multimodalMicBtn = document.getElementById("multimodalMicBtn");
+
+// ── Structured Output (itinerary consistency tester) elements ──────────────
+const openStructuredBtn = document.getElementById("openStructuredBtn");
+const structuredSection = document.getElementById("structured-section");
+const closeStructuredBtn = document.getElementById("closeStructuredBtn");
+const structuredSendBtn = document.getElementById("structuredSendBtn");
+const structuredClearBtn = document.getElementById("structuredClearBtn");
+const structuredGeminiSelect = document.getElementById("structuredGeminiSelect");
+const structuredQwenSelect = document.getElementById("structuredQwenSelect");
+const destinationInput = document.getElementById("destinationInput");
+const daysInput = document.getElementById("daysInput");
+const preferenceInput = document.getElementById("preferenceInput");
+const runsInput = document.getElementById("runsInput");
 
 let multimodalCameraStream = null;
 let multimodalMicStream = null;
@@ -54,11 +66,48 @@ let activeMultimodalModel = "gemini-3.1-flash-lite";
 let activeMultimodalMode = "function_call";
 let discardMultimodalRecording = false;
 
+let multimodalHistory = [];
 
+// ── Timestamp helpers ────────────────────────────────────────────────────────
 
-// Add near your other multimodal state vars
-let multimodalHistory = []; // { role: "user"|"model", parts: [{ text }] }
+function fmtTime(date) {
+  const h = String(date.getHours()).padStart(2, "0");
+  const m = String(date.getMinutes()).padStart(2, "0");
+  const s = String(date.getSeconds()).padStart(2, "0");
+  const ms = String(date.getMilliseconds()).padStart(3, "0");
+  return `${h}:${m}:${s}.${ms}`;
+}
 
+function fmtDelta(ms) {
+  return `+${(ms / 1000).toFixed(2)}s`;
+}
+
+// ── Inject timestamp CSS once ────────────────────────────────────────────────
+
+(function injectTimestampStyles() {
+  const style = document.createElement("style");
+  style.textContent = `
+    .message {
+      position: relative;
+      padding-bottom: 18px; /* room for timestamp */
+    }
+    .msg-ts {
+      position: absolute;
+      bottom: 3px;
+      font-size: 10px;
+      line-height: 1;
+      opacity: 0.55;
+      white-space: nowrap;
+      font-variant-numeric: tabular-nums;
+      letter-spacing: 0.01em;
+    }
+    .message.user  .msg-ts { right: 6px; }
+    .message.gemini .msg-ts { left: 6px; }
+  `;
+  document.head.appendChild(style);
+})();
+
+// ────────────────────────────────────────────────────────────────────────────
 
 function parseModelSelect(value) {
   const [model, mode] = value.split("|");
@@ -87,8 +136,6 @@ const geminiClient = new GeminiClient({
     statusDiv.className = "status connected";
     authSection.classList.add("hidden");
     appSection.classList.remove("hidden");
-
-    // geminiClient.sendText(PROVIDER_INTROS[activeProvider] || PROVIDER_INTROS.gemini);
   },
   onMessage: (event) => {
     if (typeof event.data === "string") {
@@ -141,14 +188,14 @@ function handleJsonMessage(msg) {
     currentUserMessageDiv = null;
   } else if (msg.type === "user") {
     if (currentUserMessageDiv) {
-      currentUserMessageDiv.textContent += msg.text;
+      currentUserMessageDiv.querySelector(".msg-body").textContent += msg.text;
       chatLog.scrollTop = chatLog.scrollHeight;
     } else {
       currentUserMessageDiv = appendMessage("user", msg.text);
     }
   } else if (msg.type === "gemini") {
     if (currentGeminiMessageDiv) {
-      currentGeminiMessageDiv.textContent += msg.text;
+      currentGeminiMessageDiv.querySelector(".msg-body").textContent += msg.text;
       chatLog.scrollTop = chatLog.scrollHeight;
     } else {
       currentGeminiMessageDiv = appendMessage("gemini", msg.text);
@@ -159,19 +206,64 @@ function handleJsonMessage(msg) {
 function appendMessage(type, text) {
   const msgDiv = document.createElement("div");
   msgDiv.className = `message ${type}`;
-  msgDiv.textContent = text;
+
+  const body = document.createElement("span");
+  body.className = "msg-body";
+  body.textContent = text;
+  msgDiv.appendChild(body);
+
+  const ts = document.createElement("span");
+  ts.className = "msg-ts";
+  ts.textContent = fmtTime(new Date());
+  msgDiv.appendChild(ts);
+
   chatLog.appendChild(msgDiv);
   chatLog.scrollTop = chatLog.scrollHeight;
   return msgDiv;
 }
 
-function appendMultimodalMessage(type, text) {
+/**
+ * Append a message bubble to the multimodal chat log.
+ * @param {string} type  "user" | "gemini"
+ * @param {string} text
+ * @param {object} [opts]
+ * @param {Date}   [opts.sentAt]      — timestamp of the user send (to compute delta on model bubble)
+ * @param {boolean}[opts.pending]     — if true, timestamp shows "…" until finaliseMultimodalBubble() is called
+ * @returns {{ div: HTMLElement, finalize: (text:string, receivedAt:Date) => void }}
+ */
+function appendMultimodalMessage(type, text, opts = {}) {
   const msgDiv = document.createElement("div");
   msgDiv.className = `message ${type}`;
-  msgDiv.textContent = text;
+
+  const body = document.createElement("span");
+  body.className = "msg-body";
+  body.textContent = text;
+  msgDiv.appendChild(body);
+
+  const ts = document.createElement("span");
+  ts.className = "msg-ts";
+
+  const now = new Date();
+
+  if (opts.pending) {
+    ts.textContent = `${fmtTime(now)} · ⏳`;
+  } else {
+    ts.textContent = fmtTime(now);
+  }
+
+  msgDiv.appendChild(ts);
   multimodalChatLog.appendChild(msgDiv);
   multimodalChatLog.scrollTop = multimodalChatLog.scrollHeight;
-  return msgDiv;
+
+  // Finalize: call this when the response arrives to fill in real text + latency
+  function finalize(finalText, receivedAt, sentAt) {
+    body.textContent = finalText;
+    const delta = sentAt ? fmtDelta(receivedAt - sentAt) : "";
+    ts.textContent = `${fmtTime(receivedAt)}${delta ? " · " + delta : ""}`;
+    multimodalChatLog.scrollTop = multimodalChatLog.scrollHeight;
+  }
+
+  return { div: msgDiv, finalize };
 }
 
 function updateFlowUI() {
@@ -179,19 +271,26 @@ function updateFlowUI() {
   activeFlow = selected ? selected.value : "realtime";
 
   const isRealtime = activeFlow === "realtime";
+  const isMultimodal = activeFlow === "multimodal";
+  const isStructured = activeFlow === "structured";
+
   realtimeOptions.classList.toggle("hidden", !isRealtime);
   connectBtn.classList.toggle("hidden", !isRealtime);
-  openMultimodalBtn.classList.toggle("hidden", isRealtime);
-  statusDiv.textContent = isRealtime
-    ? "Disconnected"
-    : "Multimodal Preview";
-  statusDiv.className = isRealtime ? "status disconnected" : "status connected";
+  openMultimodalBtn.classList.toggle("hidden", !isMultimodal);
+  openStructuredBtn.classList.toggle("hidden", !isStructured);
+
+  if (isRealtime) {
+    statusDiv.textContent = "Disconnected";
+    statusDiv.className = "status disconnected";
+  } else {
+    statusDiv.textContent = isStructured ? "Structured Output" : "Multimodal Preview";
+    statusDiv.className = "status connected";
+  }
 }
 
 document.querySelectorAll('input[name="flow"]').forEach((input) => {
   input.addEventListener("change", updateFlowUI);
 });
-
 
 function openMultimodalWorkspace() {
   authSection.classList.add("hidden");
@@ -219,15 +318,8 @@ function resetMultimodalMediaPreview() {
 
 function updateMultimodalMediaNote() {
   const parts = [];
-
-  if (multimodalVideoBlob) {
-    parts.push("recorded video");
-  }
-
-  if (multimodalUploadedFile) {
-    parts.push(multimodalUploadedFile.name);
-  }
-
+  if (multimodalVideoBlob) parts.push("recorded video");
+  if (multimodalUploadedFile) parts.push(multimodalUploadedFile.name);
   multimodalMediaNote.textContent = parts.length
     ? `Saved: ${parts.join(" + ")}. Add text if needed, then click Send.`
     : "Text-only prompts can be sent without recording or uploading.";
@@ -292,7 +384,6 @@ recordBtn.onclick = async () => {
     return;
   }
 
-  // Build a combined stream from active camera + mic tracks
   const tracks = [];
   if (multimodalCameraStream) tracks.push(...multimodalCameraStream.getVideoTracks());
   if (multimodalMicStream) tracks.push(...multimodalMicStream.getAudioTracks());
@@ -320,7 +411,6 @@ recordBtn.onclick = async () => {
       multimodalVideoChunks = [];
     } else {
       multimodalVideoBlob = new Blob(multimodalVideoChunks, { type: "video/webm" });
-      // keep camera preview live — don't swap srcObject
     }
     discardMultimodalRecording = false;
     recordBtn.textContent = "Record";
@@ -356,7 +446,6 @@ multimodalFile.addEventListener("change", () => {
   updateMultimodalMediaNote();
 });
 
-
 multimodalModelSelect.addEventListener("change", () => {
   const parsed = parseModelSelect(multimodalModelSelect.value);
   activeMultimodalModel = parsed.model;
@@ -365,8 +454,6 @@ multimodalModelSelect.addEventListener("change", () => {
   statusDiv.textContent = `Multimodal Preview (${activeMultimodalModel} · ${activeMultimodalMode})`;
 });
 
-
-
 // Connect Button Handler
 connectBtn.onclick = async () => {
   if (activeFlow !== "realtime") return;
@@ -374,14 +461,11 @@ connectBtn.onclick = async () => {
   const selected = document.querySelector('input[name="provider"]:checked');
   activeProvider = selected ? selected.value : "gemini";
 
-  statusDiv.textContent = `Connecting to ${PROVIDER_LABELS[activeProvider] || activeProvider
-    }...`;
+  statusDiv.textContent = `Connecting to ${PROVIDER_LABELS[activeProvider] || activeProvider}...`;
   connectBtn.disabled = true;
 
   try {
-    // Initialize audio context on user gesture
     await mediaHandler.initializeAudio();
-
     geminiClient.connect(activeProvider);
   } catch (error) {
     console.error("Connection error:", error);
@@ -391,7 +475,6 @@ connectBtn.onclick = async () => {
   }
 };
 
-// Camera toggle
 multimodalCameraBtn.onclick = async () => {
   if (multimodalCameraStream) {
     multimodalCameraStream.getVideoTracks().forEach(t => t.stop());
@@ -419,7 +502,6 @@ multimodalCameraBtn.onclick = async () => {
   }
 };
 
-// Mic toggle
 multimodalMicBtn.onclick = async () => {
   if (multimodalMicStream) {
     multimodalMicStream.getAudioTracks().forEach(t => t.stop());
@@ -437,7 +519,6 @@ multimodalMicBtn.onclick = async () => {
   }
 };
 
-// UI Controls
 disconnectBtn.onclick = () => {
   geminiClient.disconnect();
 };
@@ -449,9 +530,7 @@ micBtn.onclick = async () => {
   } else {
     try {
       await mediaHandler.startAudio((data) => {
-        if (geminiClient.isConnected()) {
-          geminiClient.send(data);
-        }
+        if (geminiClient.isConnected()) geminiClient.send(data);
       });
       micBtn.textContent = "Stop Mic";
     } catch (e) {
@@ -467,17 +546,13 @@ cameraBtn.onclick = async () => {
     screenBtn.textContent = "Share Screen";
     videoPlaceholder.classList.remove("hidden");
   } else {
-    // If another stream is active (e.g. Screen), stop it first
     if (mediaHandler.videoStream) {
       mediaHandler.stopVideo(videoPreview);
       screenBtn.textContent = "Share Screen";
     }
-
     try {
       await mediaHandler.startVideo(videoPreview, (base64Data) => {
-        if (geminiClient.isConnected()) {
-          geminiClient.sendImage(base64Data);
-        }
+        if (geminiClient.isConnected()) geminiClient.sendImage(base64Data);
       });
       cameraBtn.textContent = "Stop Camera";
       screenBtn.textContent = "Share Screen";
@@ -495,22 +570,17 @@ screenBtn.onclick = async () => {
     cameraBtn.textContent = "Start Camera";
     videoPlaceholder.classList.remove("hidden");
   } else {
-    // If another stream is active (e.g. Camera), stop it first
     if (mediaHandler.videoStream) {
       mediaHandler.stopVideo(videoPreview);
       cameraBtn.textContent = "Start Camera";
     }
-
     try {
       await mediaHandler.startScreen(
         videoPreview,
         (base64Data) => {
-          if (geminiClient.isConnected()) {
-            geminiClient.sendImage(base64Data);
-          }
+          if (geminiClient.isConnected()) geminiClient.sendImage(base64Data);
         },
         () => {
-          // onEnded callback (e.g. user stopped sharing from browser)
           screenBtn.textContent = "Share Screen";
           videoPlaceholder.classList.remove("hidden");
         }
@@ -525,13 +595,9 @@ screenBtn.onclick = async () => {
 };
 
 sendBtn.onclick = sendText;
-textInput.onkeypress = (e) => {
-  if (e.key === "Enter") sendText();
-};
+textInput.onkeypress = (e) => { if (e.key === "Enter") sendText(); };
 multimodalSendBtn.onclick = sendMultimodalPreview;
-multimodalTextInput.onkeypress = (e) => {
-  if (e.key === "Enter") sendMultimodalPreview();
-};
+multimodalTextInput.onkeypress = (e) => { if (e.key === "Enter") sendMultimodalPreview(); };
 
 function sendText() {
   const text = textInput.value;
@@ -546,70 +612,50 @@ async function sendMultimodalPreview() {
   const text = multimodalTextInput.value.trim();
   const hasVideo = Boolean(multimodalVideoBlob);
   const hasMedia = Boolean(multimodalUploadedFile);
-  console.log(JSON.stringify(multimodalHistory));
-  if (!text && !hasVideo && !hasMedia) {
-    return;
-  }
+
+  if (!text && !hasVideo && !hasMedia) return;
 
   const requestParts = [];
+  if (text) requestParts.push(text);
+  if (hasVideo) requestParts.push("[recorded video]");
+  if (hasMedia) requestParts.push(`[${multimodalUploadedFile.type || "media"}: ${multimodalUploadedFile.name}]`);
 
-  // requestParts.push(`Model: ${activeMultimodalModel}`);
+  // ── User bubble with send timestamp ──────────────────────────────────────
+  const sentAt = new Date();
+  appendMultimodalMessage("user", requestParts.join("\n"), { sentAt });
 
-  if (text) {
-    requestParts.push(text);
-  }
-
-  if (hasVideo) {
-    requestParts.push("[recorded video]");
-  }
-
-  if (hasMedia) {
-    requestParts.push(`[${multimodalUploadedFile.type || "media"}: ${multimodalUploadedFile.name}]`);
-  }
-
-  appendMultimodalMessage("user", requestParts.join("\n"));
-  const pendingMessage = appendMultimodalMessage("gemini", "Generating...");
+  // ── Pending model bubble ──────────────────────────────────────────────────
+  const { finalize } = appendMultimodalMessage("gemini", "Generating…", { pending: true });
 
   const formData = new FormData();
   formData.append("model", activeMultimodalModel);
   formData.append("mode", activeMultimodalMode);
   formData.append("prompt", text);
-  formData.append("history", JSON.stringify(multimodalHistory)); // ← new
+  formData.append("history", JSON.stringify(multimodalHistory));
 
-
-  if (hasMedia) {
-    formData.append("media", multimodalUploadedFile);
-  }
-
+  if (hasMedia) formData.append("media", multimodalUploadedFile);
   if (hasVideo) {
-    const videoFile = new File([multimodalVideoBlob], "recording.webm", {
-      type: "video/webm",
-    });
-    formData.append("media", videoFile);   // ← "media" not "audio"
+    const videoFile = new File([multimodalVideoBlob], "recording.webm", { type: "video/webm" });
+    formData.append("media", videoFile);
   }
 
   multimodalSendBtn.disabled = true;
   recordBtn.disabled = true;
 
-
   try {
-    const response = await fetch("/multimodal", {
-      method: "POST",
-      body: formData,
-    });
+    const response = await fetch("/multimodal", { method: "POST", body: formData });
     const payload = await response.json();
 
-    if (!response.ok) {
-      throw new Error(payload.detail || "Multimodal request failed");
-    }
+    if (!response.ok) throw new Error(payload.detail || "Multimodal request failed");
 
+    const receivedAt = new Date();
     const assistantText = payload.text || "The model returned an empty response.";
-    pendingMessage.textContent = assistantText;
 
-    // Push both turns into history after success
+    // ── Finalize model bubble: fill text + latency delta ──────────────────
+    finalize(assistantText, receivedAt, sentAt);
+
     multimodalHistory.push({ role: "user", parts: [{ text: requestParts.join("\n") }] });
     multimodalHistory.push({ role: "model", parts: [{ text: assistantText }] });
-
 
     latestMultimodalInputTokens = payload.usage?.input_tokens || 0;
     latestMultimodalOutputTokens = payload.usage?.output_tokens || 0;
@@ -617,7 +663,8 @@ async function sendMultimodalPreview() {
     clearMultimodalDraft();
   } catch (error) {
     console.error("Multimodal request failed:", error);
-    pendingMessage.textContent = `Error: ${error.message}`;
+    const receivedAt = new Date();
+    finalize(`Error: ${error.message}`, receivedAt, sentAt);
     multimodalSendBtn.disabled = false;
   } finally {
     recordBtn.disabled = false;
@@ -628,6 +675,7 @@ function resetUI() {
   authSection.classList.remove("hidden");
   appSection.classList.add("hidden");
   multimodalSection.classList.add("hidden");
+  structuredSection.classList.add("hidden");
   sessionEndSection.classList.add("hidden");
 
   mediaHandler.stopAudio();
@@ -666,8 +714,141 @@ function showSessionEnd() {
   mediaHandler.stopVideo(videoPreview);
 }
 
-restartBtn.onclick = () => {
+restartBtn.onclick = () => { resetUI(); };
+
+// ── Structured Output: itinerary consistency tester ─────────────────────────
+//
+// Pure text-in, structured-JSON-out. No media. Each provider's chosen model is
+// called `runs` times with identical input; every run is independently
+// validated server-side against a deeply nested JSON Schema. Invalid runs show
+// the real error — not papered over with a retry or a "fixed" result.
+
+function openStructuredWorkspace() {
+  authSection.classList.add("hidden");
+  appSection.classList.add("hidden");
+  sessionEndSection.classList.add("hidden");
+  structuredSection.classList.remove("hidden");
+  statusDiv.textContent = "Structured Output";
+  statusDiv.className = "status connected";
+}
+
+openStructuredBtn.onclick = openStructuredWorkspace;
+
+closeStructuredBtn.onclick = () => {
+  structuredSection.classList.add("hidden");
   resetUI();
+};
+
+function resetItineraryResults() {
+  ["gemini", "qwen"].forEach((provider) => {
+    document.getElementById(`${provider}-itinerary-runs`).innerHTML = "";
+    document.getElementById(`${provider}-itinerary-summary`).textContent = "";
+    document.getElementById(`${provider}-itinerary-summary`).className = "itinerary-summary-badge";
+  });
+}
+
+structuredClearBtn.onclick = resetItineraryResults;
+
+function renderRunCard(run) {
+  const card = document.createElement("div");
+  card.className = `run-card ${run.valid ? "valid" : "invalid"}`;
+
+  const header = document.createElement("div");
+  header.className = "run-card-header";
+  const badge = document.createElement("span");
+  badge.className = `run-badge ${run.valid ? "valid" : "invalid"}`;
+  badge.textContent = run.valid ? "✓ Valid" : "✗ Invalid";
+  const meta = document.createElement("span");
+  meta.className = "run-meta";
+  meta.textContent = `Run ${run.run_index + 1} · ${run.latency_seconds}s`;
+  header.appendChild(badge);
+  header.appendChild(meta);
+  card.appendChild(header);
+
+  if (!run.valid) {
+    const errorEl = document.createElement("div");
+    errorEl.className = "run-error";
+    errorEl.textContent = run.error || "Unknown error";
+    card.appendChild(errorEl);
+  }
+
+  if (run.usage) {
+    const usageEl = document.createElement("div");
+    usageEl.className = "run-usage";
+    usageEl.textContent = `In: ${run.usage.input_tokens} · Out: ${run.usage.output_tokens} · Total: ${run.usage.total_tokens}`;
+    card.appendChild(usageEl);
+  }
+
+  const raw = run.data ? JSON.stringify(run.data, null, 2) : (run.raw_text || "(no output)");
+  const details = document.createElement("details");
+  details.className = "run-details";
+  const summary = document.createElement("summary");
+  summary.textContent = run.valid ? "View itinerary JSON" : "View raw output";
+  const pre = document.createElement("pre");
+  pre.textContent = raw;
+  details.appendChild(summary);
+  details.appendChild(pre);
+  card.appendChild(details);
+
+  return card;
+}
+
+async function runItineraryProvider(provider, model, destination, days, preference, runs) {
+  const runsContainer = document.getElementById(`${provider}-itinerary-runs`);
+  const summaryBadge = document.getElementById(`${provider}-itinerary-summary`);
+  runsContainer.innerHTML = "";
+  summaryBadge.textContent = "Generating…";
+  summaryBadge.className = "itinerary-summary-badge loading";
+
+  const fd = new FormData();
+  fd.append("model", model);
+  fd.append("destination", destination);
+  fd.append("days", days);
+  fd.append("preference", preference);
+  fd.append("runs", runs);
+
+  try {
+    const resp = await fetch("/itinerary/structured", { method: "POST", body: fd });
+    const payload = await resp.json();
+    if (!resp.ok) throw new Error(payload.detail || "Request failed");
+
+    payload.runs.forEach((run) => runsContainer.appendChild(renderRunCard(run)));
+
+    summaryBadge.textContent = `${payload.valid_count}/${payload.total_runs} valid`;
+    summaryBadge.className = `itinerary-summary-badge ${payload.valid_count === payload.total_runs ? "all-valid" : "partial"}`;
+  } catch (err) {
+    console.error(`${provider} itinerary error:`, err);
+    summaryBadge.textContent = "Request failed";
+    summaryBadge.className = "itinerary-summary-badge invalid";
+    const errorCard = document.createElement("div");
+    errorCard.className = "run-card invalid";
+    errorCard.textContent = `Error: ${err.message}`;
+    runsContainer.appendChild(errorCard);
+  }
+}
+
+structuredSendBtn.onclick = async () => {
+  const destination = destinationInput.value.trim();
+  const days = parseInt(daysInput.value, 10) || 1;
+  const preference = preferenceInput.value.trim();
+  const runs = Math.max(1, Math.min(parseInt(runsInput.value, 10) || 3, 5));
+
+  if (!destination || !preference) {
+    alert("Fill in destination and preference first.");
+    return;
+  }
+
+  const geminiModel = structuredGeminiSelect.value;
+  const qwenModel = structuredQwenSelect.value;
+
+  structuredSendBtn.disabled = true;
+
+  await Promise.all([
+    runItineraryProvider("gemini", geminiModel, destination, days, preference, runs),
+    runItineraryProvider("qwen", qwenModel, destination, days, preference, runs),
+  ]);
+
+  structuredSendBtn.disabled = false;
 };
 
 updateFlowUI();

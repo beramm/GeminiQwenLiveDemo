@@ -36,12 +36,11 @@
               <strong>Multimodal:</strong> Upload media and send a text prompt
               for a single response
             </li>
-
+            <li>
+              <strong>Structured Output:</strong> Generate a travel itinerary with
+              Gemini and Qwen, N times each, and test schema-validity consistency
+            </li>
           </ul>
-          <p>
-            <em>Note: The multimodal client is a frontend preview for now. The
-              Gemini multimodal integration can be connected next.</em>
-          </p>
         </div>
         <p>Choose how you want to interact with the model.</p>
 
@@ -58,6 +57,13 @@
             <span class="flow-title">Multimodal</span>
             <span class="flow-copy">
               Attach media, write a prompt, and prepare a one-shot request.
+            </span>
+          </label>
+          <label class="flow-card">
+            <input type="radio" name="flow" value="structured" />
+            <span class="flow-title">Structured Output</span>
+            <span class="flow-copy">
+              Generate a travel itinerary with Gemini and Qwen, N times each, and test schema-validity consistency.
             </span>
           </label>
         </div>
@@ -80,6 +86,9 @@
         <button id="connectBtn" class="btn">Connect Realtime</button>
         <button id="openMultimodalBtn" class="btn hidden">
           Open Multimodal
+        </button>
+        <button id="openStructuredBtn" class="btn hidden">
+          Open Structured Output
         </button>
       </div>
 
@@ -200,6 +209,73 @@
                   <span class="token-label">Out</span>
                   <span class="token-value" id="multimodalOutputTokens">0</span>
                 </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="app-section hidden" id="structured-section">
+        <div class="structured-layout">
+          <div class="structured-input-panel">
+            <div class="model-selector">
+              <label for="destinationInput">Destination</label>
+              <input type="text" id="destinationInput" placeholder="e.g. Tokyo, Japan" />
+            </div>
+            <div class="model-selector">
+              <label for="daysInput">Days</label>
+              <input type="number" id="daysInput" value="3" min="1" max="30" />
+            </div>
+            <div class="model-selector">
+              <label for="preferenceInput">Preference</label>
+              <input type="text" id="preferenceInput" placeholder="e.g. relaxing, foodie, budget-friendly" />
+            </div>
+            <div class="model-selector">
+              <label for="runsInput">Runs per model</label>
+              <input type="number" id="runsInput" value="3" min="1" max="5" />
+            </div>
+            <div class="model-selector">
+              <label for="structuredGeminiSelect">Gemini Model</label>
+              <select id="structuredGeminiSelect">
+                <option value="gemini-3.1-flash-lite">gemini-3.1-flash-lite</option>
+                <option value="gemini-3.5-flash">gemini-3.5-flash</option>
+                <option value="gemini-3.1-pro-preview">gemini-3.1-pro-preview</option>
+                <option value="gemini-3-flash-preview">gemini-3-flash-preview</option>
+              </select>
+            </div>
+            <div class="model-selector">
+              <label for="structuredQwenSelect">Qwen Model</label>
+              <select id="structuredQwenSelect">
+                <option value="qwen3.6-flash">qwen3.6-flash</option>
+                <option value="qwen3.5-omni-flash">qwen3.5-omni-flash</option>
+              </select>
+            </div>
+            <p class="note">
+              Each model is called N times with identical input. Every run is independently validated
+              against a deeply nested JSON Schema (day-by-day itinerary, activities, costs, accommodation).
+              Invalid runs show the real parse/validation error — not papered over.
+            </p>
+            <div class="controls">
+              <button id="structuredSendBtn" class="btn">Generate &amp; Test Consistency</button>
+              <button id="structuredClearBtn" class="btn" style="background:#6c757d">Clear Results</button>
+              <button id="closeStructuredBtn" class="btn icon-btn danger">Back</button>
+            </div>
+          </div>
+
+          <div class="structured-results-panel">
+            <div class="itinerary-results">
+              <div class="itinerary-column" id="gemini-itinerary-column">
+                <div class="itinerary-column-header">
+                  <span class="itinerary-column-title">Gemini</span>
+                  <span class="itinerary-summary-badge" id="gemini-itinerary-summary"></span>
+                </div>
+                <div class="itinerary-runs" id="gemini-itinerary-runs"></div>
+              </div>
+              <div class="itinerary-column" id="qwen-itinerary-column">
+                <div class="itinerary-column-header">
+                  <span class="itinerary-column-title">Qwen</span>
+                  <span class="itinerary-summary-badge" id="qwen-itinerary-summary"></span>
+                </div>
+                <div class="itinerary-runs" id="qwen-itinerary-runs"></div>
               </div>
             </div>
           </div>

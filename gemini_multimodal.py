@@ -149,6 +149,57 @@ class GeminiMultimodal:
 
     # ── Helpers ──────────────────────────────────────────────────────────────
 
+    async def generate_itinerary(
+        self,
+        model: str,
+        destination: str,
+        days: int,
+        preference: str,
+    ) -> dict:
+        """Single-call structured output: returns {text, usage} — text is raw model
+        output, NOT pre-parsed. Validation happens centrally in main.py so both
+        providers go through identical checks for a fair comparison."""
+        from itinerary_schema import ITINERARY_SCHEMA, dict_to_gemini_schema
+
+        prompt = (
+            f"Create a detailed {days}-day travel itinerary for {destination}. "
+            f"Traveler preference: {preference}. "
+            "Include realistic activities, meals, accommodation, and cost estimates for each day."
+        )
+
+        config = types.GenerateContentConfig(
+            system_instruction="You are a travel planning assistant that produces detailed, realistic itineraries.",
+            response_mime_type="application/json",
+            response_schema=dict_to_gemini_schema(ITINERARY_SCHEMA),
+        )
+
+        logger.info("Starting itinerary generate | model=%s destination=%s days=%s", model, destination, days)
+
+        response = await self.client.aio.models.generate_content(
+            model=model,
+            contents=[types.Part.from_text(text=prompt)],
+            config=config,
+        )
+
+        usage_meta = getattr(response, "usage_metadata", None)
+        usage = None
+        if usage_meta:
+            usage = {
+                "input_tokens": getattr(usage_meta, "prompt_token_count", 0) or 0,
+                "output_tokens": (
+                    getattr(usage_meta, "candidates_token_count", 0)
+                    or getattr(usage_meta, "response_token_count", 0)
+                    or 0
+                ),
+                "total_tokens": getattr(usage_meta, "total_token_count", 0) or 0,
+            }
+
+        return {
+            "model": model,
+            "text": response.text or "",
+            "usage": usage,
+        }
+
     def _extract_function_calls(self, response) -> list:
         """Deduplicated function calls from a response object."""
         calls: list = []
