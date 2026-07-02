@@ -81,6 +81,20 @@
               <span>Qwen Omni</span>
             </label>
           </div>
+
+          <div class="qwen-mode-selector hidden" id="qwen-mode-selector">
+            <p class="option-label">Qwen Agent Mode</p>
+            <div class="provider-selector">
+              <label class="provider-option">
+                <input type="radio" name="qwen-realtime-mode" value="function_call" checked />
+                <span>Function Call</span>
+              </label>
+              <label class="provider-option">
+                <input type="radio" name="qwen-realtime-mode" value="grounding" />
+                <span>Grounding</span>
+              </label>
+            </div>
+          </div>
         </div>
 
         <button id="connectBtn" class="btn">Connect Realtime</button>
@@ -174,31 +188,30 @@
             <div class="model-selector">
               <label for="multimodalModelSelect">Model</label>
               <select id="multimodalModelSelect">
-                <optgroup label="gemini-3.1-flash-lite">
-                  <option value="gemini-3.1-flash-lite|function_call">gemini-3.1-flash-lite — Function Call</option>
-                  <option value="gemini-3.1-flash-lite|grounding">gemini-3.1-flash-lite — Grounding</option>
+                <optgroup label="Gemini">
+                  <option value="gemini-3.1-flash-lite">gemini-3.1-flash-lite</option>
+                  <option value="gemini-3.1-pro-preview">gemini-3.1-pro-preview</option>
+                  <option value="gemini-3.5-flash">gemini-3.5-flash</option>
+                  <option value="gemini-3-flash-preview">gemini-3-flash-preview</option>
                 </optgroup>
-                <optgroup label="gemini-3.1-pro-preview">
-                  <option value="gemini-3.1-pro-preview|function_call">gemini-3.1-pro-preview — Function Call</option>
-                  <option value="gemini-3.1-pro-preview|grounding">gemini-3.1-pro-preview — Grounding</option>
-                </optgroup>
-                <optgroup label="qwen3.6-flash">
-                  <option value="qwen3.6-flash|function_call">qwen3.6-flash — Function Call</option>
-                  <option value="qwen3.6-flash|grounding">qwen3.6-flash — Grounding</option>
-                </optgroup>
-                <optgroup label="qwen3.5-omni-flash">
-                  <option value="qwen3.5-omni-flash|function_call">qwen3.5-omni-flash — Function Call</option>
-                  <option value="qwen3.5-omni-flash|grounding">qwen3.5-omni-flash — Grounding</option>
-                </optgroup>
-                <optgroup label="gemini-3.5-flash">
-                  <option value="gemini-3.5-flash|function_call">gemini-3.5-flash — Function Call</option>
-                  <option value="gemini-3.5-flash|grounding">gemini-3.5-flash — Grounding</option>
-                </optgroup>
-                <optgroup label="gemini-3-flash-preview">
-                  <option value="gemini-3-flash-preview|function_call">gemini-3-flash-preview — Function Call</option>
-                  <option value="gemini-3-flash-preview|grounding">gemini-3-flash-preview — Grounding</option>
+                <optgroup label="Qwen">
+                  <option value="qwen3.6-flash">qwen3.6-flash</option>
+                  <option value="qwen3.5-omni-flash">qwen3.5-omni-flash</option>
                 </optgroup>
               </select>
+            </div>
+            <div class="mode-toggle-row">
+              <span class="mode-toggle-label">Mode</span>
+              <div class="provider-selector">
+                <label class="provider-option">
+                  <input type="radio" name="multimodal-mode" value="function_call" checked />
+                  <span>Function Call</span>
+                </label>
+                <label class="provider-option">
+                  <input type="radio" name="multimodal-mode" value="grounding" />
+                  <span>Grounding</span>
+                </label>
+              </div>
             </div>
             <div class="chat-log" id="multimodal-chat-log"></div>
             <div class="input-area">

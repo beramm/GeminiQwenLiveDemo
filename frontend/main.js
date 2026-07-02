@@ -29,6 +29,7 @@ const multimodalImagePreview = document.getElementById("multimodal-image-preview
 const multimodalVideoPreview = document.getElementById("multimodal-video-preview");
 const multimodalMediaNote = document.getElementById("multimodal-media-note");
 const multimodalModelSelect = document.getElementById("multimodalModelSelect");
+
 const multimodalCameraBtn = document.getElementById("multimodalCameraBtn");
 const multimodalMicBtn = document.getElementById("multimodalMicBtn");
 
@@ -45,8 +46,11 @@ const daysInput = document.getElementById("daysInput");
 const preferenceInput = document.getElementById("preferenceInput");
 const runsInput = document.getElementById("runsInput");
 
+const qwenModeSelector = document.getElementById("qwen-mode-selector");
+
 let multimodalCameraStream = null;
 let multimodalMicStream = null;
+let activeRealtimeMode = "function_call";
 
 let currentGeminiMessageDiv = null;
 let currentUserMessageDiv = null;
@@ -292,14 +296,25 @@ document.querySelectorAll('input[name="flow"]').forEach((input) => {
   input.addEventListener("change", updateFlowUI);
 });
 
+document.querySelectorAll('input[name="provider"]').forEach((input) => {
+  input.addEventListener("change", () => {
+    const isQwen = input.value === "qwen" && input.checked;
+    qwenModeSelector.classList.toggle("hidden", !isQwen);
+  });
+});
+
+document.querySelectorAll('input[name="qwen-realtime-mode"]').forEach((input) => {
+  input.addEventListener("change", () => {
+    if (input.checked) activeRealtimeMode = input.value;
+  });
+});
+
 function openMultimodalWorkspace() {
   authSection.classList.add("hidden");
   appSection.classList.add("hidden");
   sessionEndSection.classList.add("hidden");
   multimodalSection.classList.remove("hidden");
-  const parsed = parseModelSelect(multimodalModelSelect.value);
-  activeMultimodalModel = parsed.model;
-  activeMultimodalMode = parsed.mode;
+  activeMultimodalModel = multimodalModelSelect.value;
   statusDiv.textContent = `Multimodal Preview (${activeMultimodalModel} · ${activeMultimodalMode})`;
   statusDiv.className = "status connected";
 }
@@ -447,11 +462,18 @@ multimodalFile.addEventListener("change", () => {
 });
 
 multimodalModelSelect.addEventListener("change", () => {
-  const parsed = parseModelSelect(multimodalModelSelect.value);
-  activeMultimodalModel = parsed.model;
-  activeMultimodalMode = parsed.mode;
+  activeMultimodalModel = multimodalModelSelect.value;
   resetMultimodalConversation();
   statusDiv.textContent = `Multimodal Preview (${activeMultimodalModel} · ${activeMultimodalMode})`;
+});
+
+document.querySelectorAll('input[name="multimodal-mode"]').forEach((input) => {
+  input.addEventListener("change", () => {
+    if (input.checked) {
+      activeMultimodalMode = input.value;
+      statusDiv.textContent = `Multimodal Preview (${activeMultimodalModel} · ${activeMultimodalMode})`;
+    }
+  });
 });
 
 // Connect Button Handler
@@ -466,7 +488,7 @@ connectBtn.onclick = async () => {
 
   try {
     await mediaHandler.initializeAudio();
-    geminiClient.connect(activeProvider);
+    geminiClient.connect(activeProvider, activeProvider === "qwen" ? activeRealtimeMode : "function_call");
   } catch (error) {
     console.error("Connection error:", error);
     statusDiv.textContent = "Connection Failed: " + error.message;
@@ -690,9 +712,7 @@ function resetUI() {
   recordBtn.textContent = "Record";
   chatLog.innerHTML = "";
   resetMultimodalConversation();
-  const parsedOnReset = parseModelSelect(multimodalModelSelect.value);
-  activeMultimodalModel = parsedOnReset.model;
-  activeMultimodalMode = parsedOnReset.mode;
+  activeMultimodalModel = multimodalModelSelect.value;
   connectBtn.disabled = false;
 
   multimodalCameraBtn.textContent = "Start Camera";

@@ -31,12 +31,14 @@ class QwenOmni:
         instructions=None,
         tools=None,
         tool_mapping=None,
+        mode="function_call",
     ):
         self.api_key = api_key
         self.model = model
         self.input_sample_rate = input_sample_rate
         self.base_url = base_url
         self.voice = voice
+        self.mode = mode
         self.instructions = instructions or (
             "You are a helpful AI assistant. Keep your responses concise and friendly. "
             "You can see the user's camera or screen which is shared as realtime input images with you."
@@ -77,11 +79,14 @@ class QwenOmni:
                         "prefix_padding_ms": 500,
                         "silence_duration_ms": 800,
                     },
-                    "enable_search": True,          
-                    "search_options": {
-                        "enable_source": True        
-                    },
-                    "tools": [
+                    
+                }
+
+                if self.mode == "grounding":
+                    session_config["enable_search"] = True
+                    session_config["search_options"] = {"enable_source": True}
+                elif self.tools:
+                    session_config["tools"] = [
                         {
                             "type": "function",
                             "name": t["name"],
@@ -89,9 +94,7 @@ class QwenOmni:
                             "parameters": t.get("parameters", {"type": "object", "properties": {}}),
                         }
                         for t in self.tools
-                    ] if self.tools else [],
-
-                }
+                    ]
                 # After session_config send, add this:
 
                 await self._send_event(ws, {"type": "session.update", "session": session_config})

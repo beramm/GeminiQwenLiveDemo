@@ -274,10 +274,7 @@ class QwenMultimodal:
         messages: list[dict] = [
             {
                 "role": "system",
-                # DashScope requires the literal word "json" somewhere in `messages`
-                # to accept response_format (verified live: 400s otherwise with
-                # "'messages' must contain the word 'json' in some form").
-                "content": "You are a travel planning assistant that produces a detailed, realistic travel itinerary as a JSON object.",
+                "content": "You are a travel planning assistant that produces detailed, realistic itineraries.",
             },
             {"role": "user", "content": prompt},
         ]

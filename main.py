@@ -817,6 +817,7 @@ async def itinerary_structured_endpoint(
 async def websocket_endpoint(
     websocket: WebSocket,
     provider: str = Query(default="gemini"),
+    mode: str = Query(default="function_call"),
 ):
     """WebSocket endpoint for Gemini Live or Qwen-Omni Realtime."""
     await websocket.accept()
@@ -850,7 +851,7 @@ async def websocket_endpoint(
             input_sample_rate=16000,
             tools=qwen_tools,
             tool_mapping=tool_mapping,
-            
+            mode=mode,
         )
     else:
         if not GEMINI_API_KEY:

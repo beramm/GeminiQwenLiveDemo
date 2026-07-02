@@ -260,6 +260,21 @@ header {
   font: inherit;
 }
 
+.mode-toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 1rem;
+}
+
+.mode-toggle-label {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+
 textarea {
   width: 100%;
   box-sizing: border-box;
