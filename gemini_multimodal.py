@@ -168,7 +168,7 @@ class GeminiMultimodal:
         )
 
         config = types.GenerateContentConfig(
-            system_instruction="You are a travel planning assistant that produces detailed, realistic itineraries.",
+            system_instruction="You are a travel planning assistant that produces a detailed, realistic travel itinerary as a JSON object.",
             response_mime_type="application/json",
             response_schema=dict_to_gemini_schema(ITINERARY_SCHEMA),
         )
